@@ -23,29 +23,36 @@ module Fluent
 
     module Mixin
       def msgpack_factory
-        if $log
-          $log.warn('Deprecated method: this method is going to be deleted. Use Fluent::MessagePackFactory.engine_factory')
+        unless @deprecated_log_done
+          deprecated_log('Deprecated method: this method is going to be deleted. Use Fluent::MessagePackFactory.engine_factory')
         end
         MessagePackFactory.engine_factory
       end
 
       def msgpack_packer(*args)
-        if $log
-          $log.warn('Deprecated method: this method is going to be deleted. Use Fluent::MessagePackFactory.msgpack_packer')
+        unless @deprecated_log_done
+          deprecated_log('Deprecated method: this method is going to be deleted. Use Fluent::MessagePackFactory.msgpack_packer')
         end
         MessagePackFactory.msgpack_packer(*args)
       end
 
       def msgpack_unpacker(*args)
-        if $log
-          $log.warn('Deprecated method: this method is going to be deleted. Use Fluent::MessagePackFactory.msgpack_unpacker')
+        unless @deprecated_log_done
+          deprecated_log('Deprecated method: this method is going to be deleted. Use Fluent::MessagePackFactory.msgpack_unpacker')
         end
         MessagePackFactory.msgpack_unpacker(*args)
       end
+
+      def deprecated_log(str)
+        if $log
+          $log.warn(str)
+          @deprecated_log_done = true
+        end
+      end
     end
 
-    def self.engine_factory
-      @@engine_factory || factory
+    def self.engine_factory(enable_time_support: false)
+      @@engine_factory || factory(enable_time_support: enable_time_support)
     end
 
     def self.msgpack_packer(*args)
@@ -56,9 +63,15 @@ module Fluent
       engine_factory.unpacker(*args)
     end
 
-    def self.factory
+    def self.factory(enable_time_support: false)
       factory = MessagePack::Factory.new
       factory.register_type(Fluent::EventTime::TYPE, Fluent::EventTime)
+      if enable_time_support
+        factory.register_type(
+          MessagePack::Timestamp::TYPE, Time,
+          packer: MessagePack::Time::Packer,
+          unpacker: MessagePack::Time::Unpacker)
+      end
       factory
     end
 
@@ -70,9 +83,15 @@ module Fluent
       factory.unpacker(*args)
     end
 
-    def self.init
+    def self.init(enable_time_support: false)
       factory = MessagePack::Factory.new
       factory.register_type(Fluent::EventTime::TYPE, Fluent::EventTime)
+      if enable_time_support
+        factory.register_type(
+          MessagePack::Timestamp::TYPE, Time,
+          packer: MessagePack::Time::Packer,
+          unpacker: MessagePack::Time::Unpacker)
+      end
       @@engine_factory = factory
     end
 

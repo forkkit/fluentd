@@ -24,16 +24,17 @@ module Fluent
     SYSTEM_CONFIG_PARAMETERS = [
       :workers, :root_dir, :log_level,
       :suppress_repeated_stacktrace, :emit_error_log_interval, :suppress_config_dump,
-      :log_event_verbose,
+      :log_event_verbose, :ignore_repeated_log_interval,
       :without_source, :rpc_endpoint, :enable_get_dump, :process_name,
       :file_permission, :dir_permission, :counter_server, :counter_client,
-      :strict_config_value
+      :strict_config_value, :enable_msgpack_time_support
     ]
 
     config_param :workers,   :integer, default: 1
     config_param :root_dir,  :string, default: nil
     config_param :log_level, :enum, list: [:trace, :debug, :info, :warn, :error, :fatal], default: 'info'
     config_param :suppress_repeated_stacktrace, :bool, default: nil
+    config_param :ignore_repeated_log_interval, :time, default: nil
     config_param :emit_error_log_interval,      :time, default: nil
     config_param :suppress_config_dump, :bool, default: nil
     config_param :log_event_verbose,    :bool, default: nil
@@ -42,6 +43,7 @@ module Fluent
     config_param :enable_get_dump, :bool, default: nil
     config_param :process_name,    :string, default: nil
     config_param :strict_config_value, :bool, default: nil
+    config_param :enable_msgpack_time_support, :bool, default: nil
     config_param :file_permission, default: nil do |v|
       v.to_i(8)
     end

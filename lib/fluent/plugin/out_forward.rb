@@ -17,6 +17,7 @@
 require 'fluent/output'
 require 'fluent/config/error'
 require 'fluent/clock'
+require 'fluent/tls'
 require 'base64'
 require 'forwardable'
 
@@ -89,9 +90,9 @@ module Fluent::Plugin
     config_param :compress, :enum, list: [:text, :gzip], default: :text
 
     desc 'The default version of TLS transport.'
-    config_param :tls_version, :enum, list: Fluent::PluginHelper::Socket::TLS_SUPPORTED_VERSIONS, default: Fluent::PluginHelper::Socket::TLS_DEFAULT_VERSION
+    config_param :tls_version, :enum, list: Fluent::TLS::SUPPORTED_VERSIONS, default: Fluent::TLS::DEFAULT_VERSION
     desc 'The cipher configuration of TLS transport.'
-    config_param :tls_ciphers, :string, default: Fluent::PluginHelper::Socket::CIPHERS_DEFAULT
+    config_param :tls_ciphers, :string, default: Fluent::TLS::CIPHERS_DEFAULT
     desc 'Skip all verification of certificates or not.'
     config_param :tls_insecure_mode, :bool, default: false
     desc 'Allow self signed certificates or not.'
@@ -323,7 +324,7 @@ module Fluent::Plugin
         end
       end
 
-      if @keepalive && @keepalive_timeout
+      if @keepalive
         timer_execute(:out_forward_keep_alived_socket_watcher, @keep_alive_watcher_interval, &method(:on_purge_obsolete_socks))
       end
     end
@@ -381,9 +382,7 @@ module Fluent::Plugin
           cert_logical_store_name: @tls_cert_logical_store_name,
           cert_use_enterprise_store: @tls_cert_use_enterprise_store,
 
-          # Enabling SO_LINGER causes data loss on Windows
-          # https://github.com/fluent/fluentd/issues/1968
-          linger_timeout: Fluent.windows? ? nil : @send_timeout,
+          linger_timeout: @send_timeout,
           send_timeout: @send_timeout,
           recv_timeout: @ack_response_timeout,
           connect_timeout: @connect_timeout,
@@ -509,7 +508,7 @@ module Fluent::Plugin
 
     class Node
       extend Forwardable
-      def_delegators :@server, :discovery_id, :host, :port, :name, :weight, :standby, :username, :password, :shared_key
+      def_delegators :@server, :discovery_id, :host, :port, :name, :weight, :standby
 
       # @param connection_manager [Fluent::Plugin::ForwardOutput::ConnectionManager]
       # @param ack_handler [Fluent::Plugin::ForwardOutput::AckHandler]
@@ -541,8 +540,8 @@ module Fluent::Plugin
           log: @log,
           hostname: sender.security && sender.security.self_hostname,
           shared_key: server.shared_key || (sender.security && sender.security.shared_key) || '',
-          password: server.password,
-          username: server.username,
+          password: server.password || '',
+          username: server.username || '',
         )
 
         @unpacker = Fluent::MessagePackFactory.msgpack_unpacker
@@ -579,12 +578,7 @@ module Fluent::Plugin
 
       def verify_connection
         connect do |sock, ri|
-          if ri.state != :established
-            establish_connection(sock, ri)
-            if ri.state != :established
-              raise "Failed to establish connection to #{@host}:#{@port}"
-            end
-          end
+          ensure_established_connection(sock, ri)
         end
       end
 
@@ -653,14 +647,7 @@ module Fluent::Plugin
       def send_data(tag, chunk)
         ack = @ack_handler && @ack_handler.create_ack(chunk.unique_id, self)
         connect(nil, ack: ack) do |sock, ri|
-          if ri.state != :established
-            establish_connection(sock, ri)
-
-            if ri.state != :established
-              raise ConnectionClosedError, "failed to establish connection with node #{@name}"
-            end
-          end
-
+          ensure_established_connection(sock, ri)
           send_data_actual(sock, tag, chunk)
         end
 
@@ -685,7 +672,9 @@ module Fluent::Plugin
 
         case @sender.heartbeat_type
         when :transport
-          connect(dest_addr) do |_ri, _sock|
+          connect(dest_addr) do |sock, ri|
+            ensure_established_connection(sock, ri)
+
             ## don't send any data to not cause a compatibility problem
             # sock.write FORWARD_TCP_HEARTBEAT_DATA
 
@@ -776,6 +765,16 @@ module Fluent::Plugin
       end
 
       private
+
+      def ensure_established_connection(sock, request_info)
+        if request_info.state != :established
+          establish_connection(sock, request_info)
+
+          if request_info.state != :established
+            raise ConnectionClosedError, "failed to establish connection with node #{@name}"
+          end
+        end
+      end
 
       def connect(host = nil, ack: false, &block)
         @connection_manager.connect(host: host || resolved_host, port: port, hostname: @hostname, ack: ack, &block)

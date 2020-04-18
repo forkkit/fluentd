@@ -15,6 +15,7 @@
 #
 
 require 'fileutils'
+require 'open3'
 
 require 'fluent/config'
 require 'fluent/counter'
@@ -300,6 +301,7 @@ module Fluent
 
       log_level = params['log_level']
       suppress_repeated_stacktrace = params['suppress_repeated_stacktrace']
+      ignore_repeated_log_interval = params['ignore_repeated_log_interval']
 
       log_path = params['log_path']
       chuser = params['chuser']
@@ -307,7 +309,7 @@ module Fluent
       log_rotate_age = params['log_rotate_age']
       log_rotate_size = params['log_rotate_size']
 
-      log_opts = {suppress_repeated_stacktrace: suppress_repeated_stacktrace}
+      log_opts = {suppress_repeated_stacktrace: suppress_repeated_stacktrace, ignore_repeated_log_interval: ignore_repeated_log_interval}
       logger_initializer = Supervisor::LoggerInitializer.new(
         log_path, log_level, chuser, chgroup, log_opts,
         log_rotate_age: log_rotate_age,
@@ -315,6 +317,7 @@ module Fluent
       )
       # this #init sets initialized logger to $log
       logger_initializer.init(:supervisor, 0)
+      logger_initializer.apply_options(format: params['log_format'], time_format: params['log_time_format'])
       logger = $log
 
       command_sender = Fluent.windows? ? "pipe" : "signal"
@@ -343,6 +346,7 @@ module Fluent
         chgroup: chgroup,
         chumask: 0,
         suppress_repeated_stacktrace: suppress_repeated_stacktrace,
+        ignore_repeated_log_interval: ignore_repeated_log_interval,
         daemonize: daemonize,
         rpc_endpoint: params['rpc_endpoint'],
         counter_server: params['counter_server'],
@@ -437,9 +441,14 @@ module Fluent
         self
       end
 
-      def apply_options(format: nil, time_format: nil)
+      def apply_options(format: nil, time_format: nil, log_dir_perm: nil, ignore_repeated_log_interval: nil)
         $log.format = format if format
         $log.time_format = time_format if time_format
+        $log.ignore_repeated_log_interval = ignore_repeated_log_interval if ignore_repeated_log_interval
+
+        if @path && log_dir_perm
+          File.chmod(log_dir_perm || 0755, File.dirname(@path))
+        end
       end
 
       def level=(level)
@@ -462,6 +471,7 @@ module Fluent
         root_dir: nil,
         suppress_interval: 0,
         suppress_repeated_stacktrace: true,
+        ignore_repeated_log_interval: nil,
         without_source: nil,
         use_v1_config: true,
         strict_config_value: nil,
@@ -501,7 +511,7 @@ module Fluent
       @cl_opt = opt
       @conf = nil
 
-      log_opts = { suppress_repeated_stacktrace: opt[:suppress_repeated_stacktrace] }
+      log_opts = {suppress_repeated_stacktrace: opt[:suppress_repeated_stacktrace], ignore_repeated_log_interval: opt[:ignore_repeated_log_interval]}
       @log = LoggerInitializer.new(
         @log_path, opt[:log_level], @chuser, @chgroup, log_opts,
         log_rotate_age: @log_rotate_age,
@@ -527,7 +537,7 @@ module Fluent
           end
         else
           begin
-            FileUtils.mkdir_p(root_dir)
+            FileUtils.mkdir_p(root_dir, mode: @system_config.dir_permission || 0755)
           rescue => e
             raise Fluent::InvalidRootDirectory, "failed to create root directory:#{root_dir}, #{e.inspect}"
           end
@@ -536,7 +546,7 @@ module Fluent
 
       begin
         ServerEngine::Privilege.change(@chuser, @chgroup)
-        MessagePackFactory.init
+        MessagePackFactory.init(enable_time_support: @system_config.enable_msgpack_time_support)
         Fluent::Engine.init(@system_config, supervisor_mode: true)
         Fluent::Engine.run_configure(@conf, dry_run: dry_run)
       rescue Fluent::ConfigError => e
@@ -584,7 +594,7 @@ module Fluent
       main_process do
         create_socket_manager if @standalone_worker
         ServerEngine::Privilege.change(@chuser, @chgroup) if @standalone_worker
-        MessagePackFactory.init
+        MessagePackFactory.init(enable_time_support: @system_config.enable_msgpack_time_support)
         Fluent::Engine.init(@system_config)
         Fluent::Engine.run_configure(@conf)
         Fluent::Engine.run
@@ -618,7 +628,12 @@ module Fluent
       @system_config = build_system_config(@conf)
 
       @log.level = @system_config.log_level
-      @log.apply_options(format: @system_config.log.format, time_format: @system_config.log.time_format)
+      @log.apply_options(
+        format: @system_config.log.format,
+        time_format: @system_config.log.time_format,
+        log_dir_perm: @system_config.dir_permission,
+        ignore_repeated_log_interval: @system_config.ignore_repeated_log_interval
+      )
 
       $log.info :supervisor, 'parsing config file is succeeded', path: @config_path
 
@@ -659,13 +674,7 @@ module Fluent
       Process.setproctitle("supervisor:#{@system_config.process_name}") if @system_config.process_name
       $log.info "starting fluentd-#{Fluent::VERSION}", pid: Process.pid, ruby: RUBY_VERSION
 
-      rubyopt = ENV["RUBYOPT"]
-      fluentd_spawn_cmd = [ServerEngine.ruby_bin_path, "-Eascii-8bit:ascii-8bit"]
-      fluentd_spawn_cmd << rubyopt if rubyopt
-      fluentd_spawn_cmd << $0
-      fluentd_spawn_cmd += $fluentdargv
-      fluentd_spawn_cmd << "--under-supervisor"
-
+      fluentd_spawn_cmd = build_spawn_command
       $log.info "spawn command to main: ", cmdline: fluentd_spawn_cmd
 
       params = {
@@ -686,9 +695,12 @@ module Fluent
         'root_dir' => @system_config.root_dir,
         'log_level' => @system_config.log_level,
         'suppress_repeated_stacktrace' => @system_config.suppress_repeated_stacktrace,
+        'ignore_repeated_log_interval' => @system_config.ignore_repeated_log_interval,
         'rpc_endpoint' => @system_config.rpc_endpoint,
         'enable_get_dump' => @system_config.enable_get_dump,
         'counter_server' => @system_config.counter_server,
+        'log_format' => @system_config.log.format,
+        'log_time_format' => @system_config.log.time_format,
       }
 
       se = ServerEngine.create(ServerModule, WorkerModule){
@@ -871,6 +883,41 @@ module Fluent
       end
       system_config.overwrite_variables(**opt)
       system_config
+    end
+
+    RUBY_ENCODING_OPTIONS_REGEX = %r{\A(-E|--encoding=|--internal-encoding=|--external-encoding=)}.freeze
+
+    def build_spawn_command
+      if ENV['TEST_RUBY_PATH']
+        fluentd_spawn_cmd = [ENV['TEST_RUBY_PATH']]
+      else
+        fluentd_spawn_cmd = [ServerEngine.ruby_bin_path]
+      end
+
+      rubyopt = ENV['RUBYOPT']
+      if rubyopt
+        encodes, others = rubyopt.split(' ').partition { |e| e.match?(RUBY_ENCODING_OPTIONS_REGEX) }
+        fluentd_spawn_cmd.concat(others)
+
+        adopted_encodes = encodes.empty? ? ['-Eascii-8bit:ascii-8bit'] : encodes
+        fluentd_spawn_cmd.concat(adopted_encodes)
+      else
+        fluentd_spawn_cmd << '-Eascii-8bit:ascii-8bit'
+      end
+
+      # Adding `-h` so that it can avoid ruby's command blocking
+      # e.g. `ruby -Eascii-8bit:ascii-8bit` will block. but `ruby -Eascii-8bit:ascii-8bit -h` won't.
+      _, e, s = Open3.capture3(*fluentd_spawn_cmd, "-h")
+      if s.exitstatus != 0
+        $log.error('Invalid option is passed to RUBYOPT', command: fluentd_spawn_cmd, error: e)
+        exit s.exitstatus
+      end
+
+      fluentd_spawn_cmd << $0
+      fluentd_spawn_cmd += $fluentdargv
+      fluentd_spawn_cmd << '--under-supervisor'
+
+      fluentd_spawn_cmd
     end
   end
 end

@@ -17,7 +17,6 @@
 require 'fileutils'
 require 'zlib'
 require 'time'
-require 'tempfile'
 
 require 'fluent/plugin/output'
 require 'fluent/config/error'
@@ -36,9 +35,6 @@ module Fluent::Plugin
       gz: :gzip,
       gzip: :gzip,
     }
-
-    FILE_PERMISSION = 0644
-    DIR_PERMISSION = 0755
 
     DEFAULT_TIMEKEY = 60 * 60 * 24
 
@@ -182,8 +178,8 @@ module Fluent::Plugin
         end
       end
 
-      @dir_perm = system_config.dir_permission || DIR_PERMISSION
-      @file_perm = system_config.file_permission || FILE_PERMISSION
+      @dir_perm = system_config.dir_permission || Fluent::DEFAULT_DIR_PERMISSION
+      @file_perm = system_config.file_permission || Fluent::DEFAULT_FILE_PERMISSION
       @need_lock = system_config.workers > 1
     end
 
@@ -232,28 +228,10 @@ module Fluent::Plugin
     end
 
     def write_gzip_with_compression(path, chunk)
-      if @append
-        # This code will be removed after zlib/multithread bug is fixed.
-        # Use Tempfile to avoid broken gzip files: https://github.com/fluent/fluentd/issues/1903
-        Tempfile.create('out_file-gzip-append') { |temp|
-          begin
-            writer = Zlib::GzipWriter.new(temp)
-            chunk.write_to(writer, compressed: :text)
-          ensure
-            writer.finish # avoid zlib finalizer warning
-          end
-          temp.rewind
-
-          File.open(path, "ab", @file_perm) do |f|
-            IO.copy_stream(temp, f)
-          end
-        }
-      else
-        File.open(path, "ab", @file_perm) do |f|
-          gz = Zlib::GzipWriter.new(f)
-          chunk.write_to(gz, compressed: :text)
-          gz.close
-        end
+      File.open(path, "ab", @file_perm) do |f|
+        gz = Zlib::GzipWriter.new(f)
+        chunk.write_to(gz, compressed: :text)
+        gz.close
       end
     end
 

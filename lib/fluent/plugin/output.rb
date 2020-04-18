@@ -1091,7 +1091,7 @@ module Fluent
         end
       end
 
-      UNRECOVERABLE_ERRORS = [Fluent::UnrecoverableError, TypeError, ArgumentError, NoMethodError, MessagePack::UnpackError]
+      UNRECOVERABLE_ERRORS = [Fluent::UnrecoverableError, TypeError, ArgumentError, NoMethodError, MessagePack::UnpackError, EncodingError]
 
       def try_flush
         chunk = @buffer.dequeue_chunk
@@ -1203,7 +1203,7 @@ module Fluent
           backup_dir = File.dirname(backup_file)
 
           log.warn "bad chunk is moved to #{backup_file}"
-          FileUtils.mkdir_p(backup_dir) unless Dir.exist?(backup_dir)
+          FileUtils.mkdir_p(backup_dir, mode: system_config.dir_permission || 0755) unless Dir.exist?(backup_dir)
           File.open(backup_file, 'ab', system_config.file_permission || 0644) { |f|
             chunk.write_to(f)
           }

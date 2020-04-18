@@ -18,7 +18,7 @@ Gem::Specification.new do |gem|
 
   gem.required_ruby_version = '>= 2.4'
 
-  gem.add_runtime_dependency("msgpack", [">= 1.2.0", "< 2.0.0"])
+  gem.add_runtime_dependency("msgpack", [">= 1.3.1", "< 2.0.0"])
   gem.add_runtime_dependency("yajl-ruby", ["~> 1.0"])
   gem.add_runtime_dependency("cool.io", [">= 1.4.5", "< 2.0.0"])
   gem.add_runtime_dependency("serverengine", [">= 2.0.4", "< 3.0.0"])
@@ -48,5 +48,6 @@ Gem::Specification.new do |gem|
   gem.add_development_dependency("test-unit", ["~> 3.3"])
   gem.add_development_dependency("test-unit-rr", ["~> 1.0"])
   gem.add_development_dependency("oj", [">= 2.14", "< 4"])
-  gem.add_development_dependency("ext_monitor", [">= 0.1.1", "< 0.2"])
+  gem.add_development_dependency("ext_monitor", [">= 0.1.2", "< 0.2"])
+  gem.add_development_dependency("async-http")
 end

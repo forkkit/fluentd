@@ -73,9 +73,11 @@ module Fluent::Config
       assert_nil(sc.root_dir)
       assert_equal(Fluent::Log::LEVEL_INFO, sc.log_level)
       assert_nil(sc.suppress_repeated_stacktrace)
+      assert_nil(sc.ignore_repeated_log_interval)
       assert_nil(sc.emit_error_log_interval)
       assert_nil(sc.suppress_config_dump)
       assert_nil(sc.without_source)
+      assert_nil(sc.enable_msgpack_time_support)
       assert_equal(:text, sc.log.format)
       assert_equal('%Y-%m-%d %H:%M:%S %z', sc.log.time_format)
     end
@@ -85,10 +87,12 @@ module Fluent::Config
       'root_dir' => ['root_dir', File.join(TMP_DIR, 'root')],
       'log_level' => ['log_level', 'error'],
       'suppress_repeated_stacktrace' => ['suppress_repeated_stacktrace', true],
+      'ignore_repeated_log_interval' => ['ignore_repeated_log_interval', 10],
       'log_event_verbose' => ['log_event_verbose', true],
       'suppress_config_dump' => ['suppress_config_dump', true],
       'without_source' => ['without_source', true],
       'strict_config_value' => ['strict_config_value', true],
+      'enable_msgpack_time_support' => ['enable_msgpack_time_support', true],
     )
     test "accepts parameters" do |(k, v)|
       conf = parse_text(<<-EOS)

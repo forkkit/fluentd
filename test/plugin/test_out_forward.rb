@@ -284,6 +284,29 @@ EOL
     assert_equal 1235, d.instance.discovery_manager.services[1].port
   end
 
+  test 'pass username and password as empty string to HandshakeProtocol' do
+    config_path = File.join(TMP_DIR, "sd_file.conf")
+    File.open(config_path, 'w') do |file|
+      file.write(%[
+- 'host': 127.0.0.1
+  'port': 1234
+  'weight': 1
+])
+    end
+
+    mock(Fluent::Plugin::ForwardOutput::HandshakeProtocol).new(log: anything, hostname: nil, shared_key: anything, password: '', username: '')
+    @d = d = create_driver(%[
+<service_discovery>
+  @type file
+  path #{config_path}
+</service_discovery>
+    ])
+
+    assert_equal 1, d.instance.discovery_manager.services.size
+    assert_equal '127.0.0.1', d.instance.discovery_manager.services[0].host
+    assert_equal 1234, d.instance.discovery_manager.services[0].port
+  end
+
   test 'compress_default_value' do
     @d = d = create_driver
     assert_equal :text, d.instance.compress
@@ -671,7 +694,7 @@ EOL
 
     @d = d = create_driver(CONFIG + %[
       require_ack_response true
-      ack_response_timeout 5s
+      ack_response_timeout 1s
       <buffer tag>
         flush_mode immediate
         retry_type periodic
@@ -699,7 +722,7 @@ EOL
       end
     end
 
-    assert_equal (5 + 2), delayed_commit_timeout_value
+    assert_equal (1 + 2), delayed_commit_timeout_value
 
     events = target_input_driver.events
     assert_equal ['test', time, records[0]], events[0]
@@ -997,7 +1020,11 @@ EOL
       e = assert_raise Fluent::UnrecoverableError do
         d.instance_start
       end
-      assert_match(/Connection refused/, e.message)
+      if Fluent.windows?
+        assert_match(/No connection could be made because the target machine actively refused it/, e.message)
+      else
+        assert_match(/Connection refused/, e.message)
+      end
 
       d.instance_shutdown
     end
@@ -1029,7 +1056,7 @@ EOL
         e = assert_raise Fluent::UnrecoverableError do
           d.instance_start
         end
-        assert_match(/Failed to establish connection/, e.message)
+        assert_match(/failed to establish connection/, e.message)
       end
     end
 
@@ -1065,7 +1092,7 @@ EOL
           d.instance_start
         end
 
-        assert_match(/Failed to establish connection/, e.message)
+        assert_match(/failed to establish connection/, e.message)
       end
     end
 
@@ -1171,6 +1198,15 @@ EOL
       ensure
         d.instance_shutdown
       end
+    end
+
+    test 'create timer of purging obsolete sockets' do
+      output_conf = CONFIG + %[keepalive true]
+      d = create_driver(output_conf)
+
+      mock(d.instance).timer_execute(:out_forward_heartbeat_request, 1).once
+      mock(d.instance).timer_execute(:out_forward_keep_alived_socket_watcher, 5).once
+      d.instance_start
     end
 
     sub_test_case 'with require_ack_response' do
